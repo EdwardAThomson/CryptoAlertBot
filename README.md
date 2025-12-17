@@ -4,6 +4,10 @@ CryptoAlertBot is a Python-based research tool for analyzing cryptocurrency mark
 
 There is an example report with AI commentary in the `examples/` directory. The commentary is slightly naive, but it illustrates a proof of concept for AI integration.
 
+**Note**: This app was started in May 2025 and was in development until mid August 2025. It doesn't utilize the latest AI models at the time of writing (December 2025).
+
+![Screenshot](Screenshot_20251217.png)
+
 ## Features
 
 - **Multi-asset support**
