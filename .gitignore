@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+.env/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local environment & secrets
+.env
+.env.*
+!env.example
+
+# Data & outputs (large / generated)
+# Raw and derived data (keep structure but ignore contents)
+data/**
+!data/config.json
+!data/README.md
+!data/*.md
+
+# Analysis & prediction outputs
+reports/**
+plots/**
+archive/**
+
+# Logs & temp
+logs/**
+*.log
+*.tmp
+temp/**
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# PDFs and other generated docs
+# *.pdf
+
+# Misc
+*.bak
+*.old

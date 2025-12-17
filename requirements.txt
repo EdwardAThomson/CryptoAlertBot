@@ -1,0 +1,11 @@
+pandas
+requests
+pdfkit
+markdown
+matplotlib
+mplfinance
+lxml
+openai
+python-dotenv
+google-generativeai
+anthropic 
