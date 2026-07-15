@@ -1,221 +1,177 @@
 # ai_helper.py
-# https://platform.openai.com/docs/models
+#
+# Facade over the shared llm-backends package (migration step 6,
+# StoryDaemon docs/LLM_BACKENDS_INVENTORY.md section 7.4).
+#
+# The public surface of the old module is preserved exactly:
+#   send_prompt, get_supported_models,
+#   send_prompt_oai, send_prompt_o1, send_prompt_gemini, send_prompt_claude
+# but all provider traffic now routes through llm_backends.multi_provider_llm
+# (lazy client init, hardened SDK construction, per-request timeouts).
+#
+# Legacy model names. The old registry keys no longer exist upstream, so they
+# are remapped here to current package primaries:
+#
+#   old CAB key                 -> package key
+#   gpt-4o                      -> gpt-5.5
+#   o1                          -> gpt-5.5
+#   o3                          -> gpt-5.5
+#   o1-mini                     -> gpt-5.4-mini
+#   o4-mini                     -> gpt-5.4-mini  (old code silently sent o3-mini)
+#   gemini-1.5-pro[-latest]     -> gemini-2.5-pro
+#   gemini-2.0-pro-exp-02-05    -> gemini-2.5-pro
+#   gemini-2.5-pro-exp-03-25    -> gemini-2.5-pro
+#   claude-3-5-sonnet[-20241022]-> claude-sonnet-4-6
+#   claude-3-7-sonnet[-20250219]-> claude-sonnet-4-6
+#   claude-3-sonnet-20240229    -> claude-sonnet-4-6
+#
+# The Claude path used to be DEAD CODE: the old send_prompt_claude referenced
+# an `anthropic_client` that was never imported or defined, so selecting
+# "claude-3-5-sonnet" / "claude-3-7-sonnet" raised NameError. Through the
+# package those keys now dispatch for real (to claude-sonnet-4-6). No CAB
+# caller selects a Claude model (reporter defaults are "o3" / "o4-mini" and
+# all hardcoded call sites are OpenAI), so this cannot start Claude spend
+# unless a model is explicitly requested.
+#
+# Behavioural notes vs. the old module:
+# - Clients are created lazily inside the package on first use, not eagerly
+#   at import time.
+# - send_prompt_o1 previously sent no system prompt; it now routes through the
+#   package registry, which applies the package's neutral default system
+#   prompt and temperature.
+# - send_prompt_gemini accepts top_p/top_k for signature compatibility but no
+#   longer forwards them (the package Gemini path does not take them).
+# - send_prompt_gemini / send_prompt_claude keep the old contract of returning
+#   None on error; send_prompt re-raises (the package wraps dispatch failures
+#   in RuntimeError).
 
-from openai import OpenAI
-import os
+import os  # noqa: F401  (kept for consumers that reach through this module)
+
 from dotenv import load_dotenv
-import google.generativeai as genai
 
+load_dotenv()  # consumers historically relied on ai_helper loading .env
 
-load_dotenv()  # This will load environment variables from the .env file
-
-# Create an OpenAI client instance
-# Ensure you've set your OpenAI API key
-client = OpenAI(
-    api_key=os.environ.get("OPENAI_API_KEY"),
+from llm_backends.multi_provider_llm import (  # noqa: E402
+    get_supported_models as _pkg_get_supported_models,
+    send_prompt as _pkg_send_prompt,
+    send_prompt_openai as _pkg_send_prompt_openai,
+    send_prompt_gemini as _pkg_send_prompt_gemini,
+    send_prompt_claude as _pkg_send_prompt_claude,
 )
 
-# Adding the possibility of using the Gemini API
-g_api_key = os.environ.get("GEMINI_API_KEY")
-genai.configure(api_key=g_api_key)
-
-# --- Define Model Configurations ---
-# Define configurations for each model
-_model_config = { # Renamed to avoid potential naming conflicts if imported directly
-    "gpt-4o": lambda prompt: send_prompt_oai(
-        prompt=prompt,
-        model="gpt-4o",
-        max_tokens=16384,
-        temperature=0.7,
-        role_description="You are an expert storyteller focused on character relationships."
-    ),
-    "o1": lambda prompt: send_prompt_o1(prompt, model="o1"), # Assuming these are placeholders or deprecated
-    "o1-mini": lambda prompt: send_prompt_o1(prompt, model="o1-mini"),
-    "o3": lambda prompt: send_prompt_o1(prompt, model="o3"),
-    "o4-mini": lambda prompt: send_prompt_o1(prompt, model="o3-mini"),
-    #"gpt-4-turbo": lambda prompt: send_prompt_oai( # Added gpt-4-turbo if supported by send_prompt_oai
-    #    prompt=prompt,
-    #    model="gpt-4-turbo",
-    #    max_tokens=8192, # Example token limit
-    #    temperature=0.7,
-    #    role_description="You are a helpful fiction writing assistant."
-    #),
-    "gemini-1.5-pro-latest": lambda prompt: send_prompt_gemini( # Renamed key to match main.py example
-        prompt=prompt,
-        model_name="gemini-1.5-pro-latest", # Use the correct API model name here
-        max_output_tokens=8192,
-        temperature=0.7,
-        top_p=1,
-        top_k=40
-    ),
-    "gemini-2.0-pro-exp-02-05": lambda prompt: send_prompt_gemini( # Keep if needed
-         prompt=prompt,
-         model_name="gemini-2.0-pro-exp-02-05",
-         max_output_tokens=8192,
-         temperature=0.7,
-         top_p=1,
-         top_k=40
-    ),
-    "gemini-2.5-pro-exp-03-25": lambda prompt: send_prompt_gemini( # Keep if needed
-         prompt=prompt,
-         model_name="gemini-2.5-pro-exp-03-25",
-         max_output_tokens=8192,
-         temperature=0.7,
-    ),
-    "claude-3-5-sonnet": lambda prompt: send_prompt_claude( # Keep if needed
-         prompt=prompt,
-         model="claude-3-5-sonnet-20241022",
-         max_tokens=4096,
-         temperature=1.0
-    ),
-    "claude-3-7-sonnet": lambda prompt: send_prompt_claude( # Keep if needed
-         prompt=prompt,
-         model="claude-3-7-sonnet-20250219",
-         max_tokens=4096,
-         temperature=0.7
-    ),
+# Old CAB registry key (and the dated API ids the old lambdas used) -> current
+# package primary. Anything not listed passes through to the package verbatim
+# (package primaries, package aliases, "openrouter:<id>", "-latest" fallback).
+LEGACY_MODEL_MAP = {
+    "gpt-4o": "gpt-5.5",
+    "o1": "gpt-5.5",
+    "o1-mini": "gpt-5.4-mini",
+    "o3": "gpt-5.5",
+    "o4-mini": "gpt-5.4-mini",
+    "gemini-1.5-pro": "gemini-2.5-pro",
+    "gemini-1.5-pro-latest": "gemini-2.5-pro",
+    "gemini-2.0-pro-exp-02-05": "gemini-2.5-pro",
+    "gemini-2.5-pro-exp-03-25": "gemini-2.5-pro",
+    "claude-3-5-sonnet": "claude-sonnet-4-6",
+    "claude-3-5-sonnet-20241022": "claude-sonnet-4-6",
+    "claude-3-7-sonnet": "claude-sonnet-4-6",
+    "claude-3-7-sonnet-20250219": "claude-sonnet-4-6",
+    "claude-3-sonnet-20240229": "claude-sonnet-4-6",
 }
-# --- End Model Configurations ---
+
+# CAB-owned system prompt (assumption A5: system prompts stay app-owned; the
+# package default is a neutral/creative-writing string, not a crypto analyst).
+CRYPTO_ANALYST_ROLE = (
+    "You are a professional cryptocurrency market analyst with expertise in "
+    "technical analysis, market structure, and digital asset investment strategies."
+)
+
+
+def _resolve(model):
+    """Map a legacy CAB model name to its package primary; pass others through."""
+    return LEGACY_MODEL_MAP.get(model, model)
+
 
 def get_supported_models():
-    """Returns a list of supported model names."""
-    return list(_model_config.keys())
+    """Returns a list of supported model names.
 
-def send_prompt(prompt, model="gpt-4o"):
-    """Sends a prompt to the specified AI model."""
-    # Check if the model is supported
-    if model not in _model_config:
-        # Try adding '-latest' if applicable (e.g., for gemini-1.5-pro)
-        if f"{model}-latest" in _model_config:
-             model = f"{model}-latest"
-        else:
-             supported_models = get_supported_models()
-             raise ValueError(f"Unsupported model: {model}. Supported models are: {supported_models}")
-
-
-    print(f"Attempting to use model: {model}")
-    # Call the corresponding function by looking up the dictionary
-    try:
-        return _model_config[model](prompt)
-    except Exception as e:
-        print(f"Error calling model '{model}': {e}")
-        # Optionally, implement fallback logic here or re-raise
-        raise # Re-raise the exception for now
-
-
-# Send prompts with GPT4o and 4o-mini
-def send_prompt_oai(prompt, model="gpt-4o", max_tokens=1500, temperature=0.7,
-                role_description="You are a helpful fiction writing assistant. You will create original text only."):
-    # Make the chat completion request using the OpenAI client
-    response = client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": role_description},
-            {"role": "user", "content": prompt},
-        ],
-        model=model,
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-
-    print("model used: ", model)
-    # Extract the generated text from the response
-    content = response.choices[0].message.content
-
-    return content
-
-# Send prompts with o1 models
-# model="o1-preview"
-# model="o1-mini",
-def send_prompt_o1(prompt, model="o1-mini"):
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {
-            "role": "user",
-            "content": prompt
-            }
-        ]
-    )
-
-    print("Used model: ", model)
-    content = response.choices[0].message.content
-
-    return content
-
-
-def send_prompt_gemini(prompt, model_name="gemini-1.5-pro", max_output_tokens=1024, temperature=0.9, top_p=1, top_k=1):
+    Package primaries plus the legacy CAB spellings that still resolve here,
+    so existing defaults ("o3", "o4-mini", "gpt-4o", ...) keep validating.
     """
-    Sends a prompt to the Gemini API and returns the response.
-
-    Args:
-        prompt: The text prompt to send.
-        model_name: The name of the Gemini model to use (e.g., "gemini-pro").
-        max_output_tokens: The maximum number of tokens to generate.
-        temperature: Controls the randomness of the output.
-        top_p: Controls the diversity of the output.
-        top_k: Controls the diversity of the output (similar to top_p).
-    Returns:
-        The generated text, or None if there was an error.
-    """
-
-    model = genai.GenerativeModel(model_name)
-
-    generation_config = genai.types.GenerationConfig(
-        max_output_tokens=max_output_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        top_k=top_k
-    )
+    return sorted(set(_pkg_get_supported_models()) | set(LEGACY_MODEL_MAP))
 
 
+def send_prompt(prompt, model="gpt-4o", max_tokens=4096):
+    """Sends a prompt to the specified AI model (legacy names are remapped)."""
+    resolved = _resolve(model)
+    if resolved != model:
+        print(f"Attempting to use model: {model} -> {resolved}")
+    else:
+        print(f"Attempting to use model: {model}")
     try:
-        response = model.generate_content(
-            prompt,
-            generation_config=generation_config,
-            stream=False
+        return _pkg_send_prompt(prompt, model=resolved, max_tokens=max_tokens)
+    except ValueError:
+        # Package raises ValueError for unknown models; re-raise with the
+        # facade's (legacy-inclusive) list, matching the old message shape.
+        supported_models = get_supported_models()
+        raise ValueError(
+            f"Unsupported model: {model}. Supported models are: {supported_models}"
         )
 
-        print("Used model: ", model)
 
-        return response.text
+def send_prompt_oai(prompt, model="gpt-4o", max_tokens=1500, temperature=0.7,
+                    role_description="You are a helpful fiction writing assistant. You will create original text only."):
+    """OpenAI chat path (old surface). Hardcoded legacy ids like 'gpt-4o' remap."""
+    return _pkg_send_prompt_openai(
+        prompt=prompt,
+        model=_resolve(model),
+        max_tokens=max_tokens,
+        temperature=temperature,
+        role_description=role_description,
+    )
+
+
+def send_prompt_o1(prompt, model="o1-mini"):
+    """Old o-series path. The o-series keys are gone; they remap to current
+    GPT-5.x primaries and route through the package registry."""
+    resolved = _resolve(model)
+    print("Used model: ", resolved)
+    return _pkg_send_prompt(prompt, model=resolved, max_tokens=4096)
+
+
+def send_prompt_gemini(prompt, model_name="gemini-1.5-pro", max_output_tokens=1024,
+                       temperature=0.9, top_p=1, top_k=1):
+    """Gemini path (old surface). Returns the generated text, or None on error.
+
+    top_p / top_k are accepted for signature compatibility but not forwarded.
+    """
+    try:
+        return _pkg_send_prompt_gemini(
+            prompt=prompt,
+            model_name=_resolve(model_name),
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+        )
     except Exception as e:
         print(f"Error generating content: {e}")
         return None
 
 
-def send_prompt_claude(prompt, model="claude-3-sonnet-20240229", max_tokens=4096, temperature=0.7,
-                     role_description="You are a professional cryptocurrency market analyst with expertise in technical analysis, market structure, and digital asset investment strategies."):
-    """
-    Sends a prompt to Anthropic's Claude API and returns the generated text.
-    
-    Args:
-        prompt: The text prompt to send.
-        model: The Claude model to use (e.g., "claude-3-opus-20240229").
-        max_tokens: Maximum number of tokens to generate.
-        temperature: Controls randomness of generations.
-        role_description: System prompt that sets the context for the model.
-        
-    Returns:
-        The generated text, or None if there was an error.
+def send_prompt_claude(prompt, model="claude-3-sonnet-20240229", max_tokens=4096,
+                       temperature=0.7, role_description=CRYPTO_ANALYST_ROLE):
+    """Claude path (old surface). Returns the generated text, or None on error.
+
+    Previously dead code (undefined anthropic_client -> NameError); now a real
+    call through the package. Legacy/dated Claude ids remap to claude-sonnet-4-6.
     """
     try:
-        # Create a message with system and user content
-        response = anthropic_client.messages.create(
-            model=model,
+        return _pkg_send_prompt_claude(
+            prompt=prompt,
+            model=_resolve(model),
             max_tokens=max_tokens,
             temperature=temperature,
-            system=role_description,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
+            role_description=role_description,
         )
-        
-        print("Used model: ", model)
-        
-        # Extract the content from the response
-        return response.content[0].text
-        
     except Exception as e:
         print(f"Error generating content with Claude: {e}")
         return None
-

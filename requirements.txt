@@ -8,4 +8,9 @@ lxml
 openai
 python-dotenv
 google-generativeai
-anthropic 
+anthropic
+# Shared multi-provider LLM backend layer (src/ai_helper.py is a facade over it).
+# Pinned tag per the migration plan (StoryDaemon docs/LLM_BACKENDS_INVENTORY.md 7.4/7.5).
+# For day-to-day development against a sibling checkout use:
+#   pip install -e ../llm-backends
+llm-backends @ git+https://github.com/EdwardAThomson/llm-backends@v0.1.1
