@@ -62,7 +62,7 @@ High-level layout:
   - `markdown_reporter_alt.py` – alternative brief AI report.
   - `ai_market_reporter.py` / `_alt.py` – AI prompt logic and helpers.
   - `technical_interpreter.py` – turns recent indicators into human-readable text.
-- **`src/ai_helper.py`** – common wrapper for OpenAI, Gemini and (optionally) Claude models.
+- **`src/ai_helper.py`** – common wrapper for OpenAI, Gemini and (optionally) Claude models; now a thin facade over the shared `llm-backends` package.
 - **`data/`** – Input and derived data (daily/weekly prices, analysis CSVs, predictions, config).
 - **`reports/`** – Generated markdown/PDF reports.
 - **`plots/`** – Generated chart images.
@@ -77,6 +77,8 @@ High-level layout:
 - Python packages (installed via `requirements.txt`):
   - `pandas`, `requests`, `pdfkit`, `markdown`, `matplotlib`, `mplfinance`, `lxml`,
     `openai`, `python-dotenv`, `google-generativeai`, `anthropic`
+  - `llm-backends` (shared multi-provider LLM layer that `ai_helper.py` wraps;
+    installed from Git via `requirements.txt`)
 
 ## Installation
 
