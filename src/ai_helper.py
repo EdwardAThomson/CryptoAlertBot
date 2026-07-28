@@ -51,6 +51,7 @@ from dotenv import load_dotenv
 
 load_dotenv()  # consumers historically relied on ai_helper loading .env
 
+from llm_backends import DEFAULT_API_MODEL  # noqa: E402
 from llm_backends.multi_provider_llm import (  # noqa: E402
     get_supported_models as _pkg_get_supported_models,
     send_prompt as _pkg_send_prompt,
@@ -62,11 +63,14 @@ from llm_backends.multi_provider_llm import (  # noqa: E402
 # Old CAB registry key (and the dated API ids the old lambdas used) -> current
 # package primary. Anything not listed passes through to the package verbatim
 # (package primaries, package aliases, "openrouter:<id>", "-latest" fallback).
+# The old flagship/o-series keys map to the package's authoritative default
+# (DEFAULT_API_MODEL, added in llm-backends 0.1.1) instead of a hardcoded
+# literal, so a future default bump upstream carries through automatically.
 LEGACY_MODEL_MAP = {
-    "gpt-4o": "gpt-5.5",
-    "o1": "gpt-5.5",
+    "gpt-4o": DEFAULT_API_MODEL,
+    "o1": DEFAULT_API_MODEL,
     "o1-mini": "gpt-5.4-mini",
-    "o3": "gpt-5.5",
+    "o3": DEFAULT_API_MODEL,
     "o4-mini": "gpt-5.4-mini",
     "gemini-1.5-pro": "gemini-2.5-pro",
     "gemini-1.5-pro-latest": "gemini-2.5-pro",
@@ -101,7 +105,7 @@ def get_supported_models():
     return sorted(set(_pkg_get_supported_models()) | set(LEGACY_MODEL_MAP))
 
 
-def send_prompt(prompt, model="gpt-4o", max_tokens=4096):
+def send_prompt(prompt, model=DEFAULT_API_MODEL, max_tokens=4096):
     """Sends a prompt to the specified AI model (legacy names are remapped)."""
     resolved = _resolve(model)
     if resolved != model:
@@ -119,9 +123,17 @@ def send_prompt(prompt, model="gpt-4o", max_tokens=4096):
         )
 
 
-def send_prompt_oai(prompt, model="gpt-4o", max_tokens=1500, temperature=0.7,
-                    role_description="You are a helpful fiction writing assistant. You will create original text only."):
-    """OpenAI chat path (old surface). Hardcoded legacy ids like 'gpt-4o' remap."""
+def send_prompt_oai(prompt, model=DEFAULT_API_MODEL, max_tokens=1500, temperature=0.7,
+                    role_description=CRYPTO_ANALYST_ROLE):
+    """OpenAI chat path (old surface). Hardcoded legacy ids like 'gpt-4o' remap.
+
+    The old default role_description was a creative-writing string ("You are a
+    helpful fiction writing assistant...") inherited from the library's origin
+    apps; CAB is a market-analysis app, so the default is now the CAB-owned
+    crypto analyst role (assumption A5: system prompts are app-owned). All
+    reporter call sites pass role_description explicitly, so this only affects
+    callers that omitted it.
+    """
     return _pkg_send_prompt_openai(
         prompt=prompt,
         model=_resolve(model),

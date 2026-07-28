@@ -169,6 +169,22 @@ def test_send_prompt_oai_remaps_hardcoded_gpt4o_and_forwards_kwargs(fake_openai)
     assert captured["messages"][1] == {"role": "user", "content": "analyse BTC"}
 
 
+def test_send_prompt_default_model_is_package_default(fake_openai):
+    from llm_backends import DEFAULT_API_MODEL
+    assert ai_helper.send_prompt("hello") == "openai fake text"
+    assert fake_openai.captured["model"] == DEFAULT_API_MODEL
+
+
+def test_send_prompt_oai_default_role_is_crypto_analyst_not_fiction(fake_openai):
+    # Regression: the old default role_description was the library's
+    # fiction-writing string; the facade default must be the CAB analyst role.
+    ai_helper.send_prompt_oai("analyse BTC")
+    system = fake_openai.captured["messages"][0]
+    assert system["role"] == "system"
+    assert "cryptocurrency market analyst" in system["content"]
+    assert "fiction" not in system["content"]
+
+
 @pytest.mark.parametrize(
     ("legacy", "expected_api_model"),
     [("o3", "gpt-5.5"), ("o4-mini", "gpt-5.4-mini"), ("o1-mini", "gpt-5.4-mini")],
