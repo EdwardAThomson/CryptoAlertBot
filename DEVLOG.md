@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-07-28
+
+Followed up on the `llm-backends` migration with a small correctness pass and a dependency bump to the package's v0.2.0 tag. The main fix: `send_prompt_oai`'s default `role_description` was still the library's origin-app persona ("a helpful fiction writing assistant"), which is nonsensical for a crypto market-analysis bot; it now defaults to CAB's own `CRYPTO_ANALYST_ROLE`. In practice every reporter call site already passes a role explicitly, so this only changes behavior for callers that omitted the argument, but it removes a latent footgun. Alongside that, the hardcoded default-model literals ("gpt-5.5", "gpt-4o") scattered through the facade defaults and `LEGACY_MODEL_MAP` were replaced with `llm_backends.DEFAULT_API_MODEL`, so a future upstream default bump now carries through automatically instead of drifting. Two regression tests pin both defaults (the analyst-role check explicitly asserts "fiction" is absent).
+
+**Decisions & notes:** The v0.2.0 bump introduces a no-default-system-prompt change upstream, but it's a no-op here because the facade already passes `role_description` explicitly on every path. This encodes assumption A5 from the migration plan: system prompts are app-owned, not library-owned.
+
 ## 2026-07-15
 
 Completed the sixth step of migrating the bot onto the shared `llm-backends` package (pinned at v0.1.1). `src/ai_helper.py` was rewritten as a thin facade over that package while preserving its full public surface, so nothing downstream had to change. The ten legacy model keys that had gone dead upstream were preserved through a `LEGACY_MODEL_MAP` (old OpenAI keys like gpt-4o/o1/o3 now resolve to gpt-5.5, the mini variants to gpt-5.4-mini, 2025-era Gemini keys to gemini-2.5-pro, and the claude-3-x keys to claude-sonnet-4-6), and `get_supported_models()` still returns both primary and legacy spellings so both reporters' constructor validation keeps passing. The migration also fixed a latent bug where the old "o4-mini" key was silently dispatching to o3-mini. Separately, this landed the repo's first tests: a `tests/` suite of 23 tests guarded by an autouse fixture that makes any live provider call structurally impossible, so the suite can never hit a real API.
